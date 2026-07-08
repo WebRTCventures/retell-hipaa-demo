@@ -1,0 +1,27 @@
+# FreePBX Terraform Infrastructure - Example Variables
+#
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Required variables must be set before running terraform plan/apply.
+
+# ─── Required Variables ──────────────────────────────────────────────────────
+
+# Your public IP in CIDR notation. This restricts SSH (port 22) and HTTPS
+# (port 443) access to the FreePBX instance to only this IP address.
+# Find your IP: curl -s ifconfig.me
+admin_ip = "YOUR_IP/32"
+
+# Name of an existing AWS key pair in your account/region.
+# This key pair will be assigned to the EC2 instance for SSH access.
+# Create one in the AWS Console under EC2 > Key Pairs if you don't have one.
+key_pair_name = "your-key-pair-name"
+
+# ─── Optional Overrides ─────────────────────────────────────────────────────
+
+# AWS region to deploy the FreePBX infrastructure (default: us-east-1)
+# aws_region = "us-east-1"
+
+# EC2 instance type for the FreePBX server (default: t3.small)
+# t3.small provides 2 vCPU and 2 GB RAM, sufficient for a demo PBX
+# instance_type = "t3.small"
