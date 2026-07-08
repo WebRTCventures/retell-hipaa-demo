@@ -1,0 +1,25 @@
+{
+  "name": "retell-hipaa-custom-llm-server",
+  "version": "1.0.0",
+  "description": "Custom LLM WebSocket server for Retell AI with HIPAA compliance enforcement",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "test": "vitest --run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "express": "5.1.0",
+    "openai": "4.96.0",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.2",
+    "@types/ws": "8.18.1",
+    "fast-check": "4.8.0",
+    "tsx": "4.19.4",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}

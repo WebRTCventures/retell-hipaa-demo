@@ -6,15 +6,15 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
 
 ## Tasks
 
-- [ ] 1. Set up project structure and configuration
-  - [ ] 1.1 Initialize the TypeScript/Node.js project
+- [x] 1. Set up project structure and configuration
+  - [x] 1.1 Initialize the TypeScript/Node.js project
     - Create `server/package.json` with name, scripts (`dev`: `tsx src/server.ts`, `test`: `vitest --run`, `test:watch`: `vitest`), and runtime dependencies (`ws`, `express`, `openai`)
     - Add dev dependencies: `tsx`, `typescript`, `@types/ws`, `@types/express`, `vitest`, `fast-check`
     - Create `server/tsconfig.json` targeting ES2022, module NodeNext, moduleResolution NodeNext, strict mode enabled
     - Create `server/src/` directory structure
     - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-  - [ ] 1.2 Define TypeScript interfaces and types
+  - [x] 1.2 Define TypeScript interfaces and types
     - Create `server/src/types.ts` with interfaces for: `TranscriptEntry`, `BaseRetellEvent`, `ResponseRequiredEvent`, `ReminderRequiredEvent`, `UpdateOnlyEvent`, `PingPongEvent`, `RetellEvent` union type
     - Define outgoing event interfaces: `ResponseEvent`, `PingPongResponse`, `ToolCallInvocationEvent`, `ToolCallResultEvent`
     - Define internal model interfaces: `PatientRecord`, `AppointmentSlot`, `BookingResult`, `PatientContext`, `AuditEntry`, `CallSummaryEntry`, `ToolCallRecord`
@@ -22,7 +22,7 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - Define `LlmResult` interface with fields: `content`, `toolCallsMade`
     - _Requirements: 16.1, 16.2, 16.3, 16.4_
 
-  - [ ] 1.3 Create constants and prompts module
+  - [x] 1.3 Create constants and prompts module
     - Create `server/src/constants.ts` exporting `SYSTEM_PROMPT` (patient intake assistant for Valley Health Clinic with function references to lookup_patient, get_available_slots, book_appointment, transfer_to_nurse)
     - Export `HIPAA_DISCLOSURE` constant (AI interaction disclosure, recording notice, transfer policy)
     - Export `TRANSFER_MESSAGE` constant (nursing staff connection message)
@@ -30,8 +30,8 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - Export `REMINDER_MESSAGE` constant for gentle reminders
     - _Requirements: 15.1, 15.2, 15.3, 15.4_
 
-- [ ] 2. Implement core modules
-  - [ ] 2.1 Implement CallSession module
+- [x] 2. Implement core modules
+  - [x] 2.1 Implement CallSession module
     - Create `server/src/call-session.ts` implementing the `CallSession` class
     - Initialize with `callId`, `turnCount: 0`, `disclosureDelivered: false`, empty `transcript` array, `patientContext: null`, `startTime: new Date()`
     - Implement `updateTranscript(entries)` to append entries to the transcript array
@@ -46,7 +46,7 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - Verify that all entries are retained in order, turnCount equals number of increments, and patient context persists until `end()` is called
     - **Validates: Requirements 4.3, 4.4, 17.3, 17.4**
 
-  - [ ] 2.3 Implement Mock EHR module
+  - [x] 2.3 Implement Mock EHR module
     - Create `server/src/mock-ehr.ts` with in-memory patient records: Maria Garcia (P001, DOB 1985-03-15, next appt 2026-07-15T10:00), James Wilson (P002, DOB 1972-11-02, no appt), Sarah Chen (P003, DOB 1990-07-22, next appt 2026-07-12T14:30)
     - Store 5 available appointment slots: 2026-07-14T09:00, 2026-07-14T11:00, 2026-07-15T14:00, 2026-07-16T10:00, 2026-07-16T15:30
     - Implement `lookupPatient(name, dob)` with case-insensitive name matching, return patient record or null
@@ -61,7 +61,7 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - **Property 12: Invalid booking returns error** — generate invalid patient IDs or unavailable slot times, verify `success: false` with non-empty message
     - **Validates: Requirements 13.3, 13.4, 14.3, 14.4**
 
-  - [ ] 2.5 Implement Compliance Validator module
+  - [x] 2.5 Implement Compliance Validator module
     - Create `server/src/compliance-validator.ts` implementing the `validate(response, session)` function
     - Rule 1 — Disclosure injection: if `turnCount === 0 && !disclosureDelivered`, prepend `HIPAA_DISCLOSURE` to response, set `disclosureDelivered = true`, action `"modify"`
     - Rule 2 — Medical advice detection: case-insensitive check against `MEDICAL_ADVICE_KEYWORDS`, if found replace response with `TRANSFER_MESSAGE`, action `"block_and_transfer"`, short-circuit (skip rule 3)
@@ -78,7 +78,7 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - **Property 6: Disclosure rule chains with subsequent rules** — turn 0 response with PHI, verify disclosure prepended AND DOB removed
     - **Validates: Requirements 7.1-7.4, 8.1-8.3, 9.1-9.4, 10.1-10.3**
 
-  - [ ] 2.7 Implement Audit Logger module
+  - [x] 2.7 Implement Audit Logger module
     - Create `server/src/audit-logger.ts` implementing `logTurn(entry: AuditEntry)` that writes a single-line JSON to stdout
     - Implement `logCallSummary(session: CallSession)` that writes a summary entry with callId, totalTurns, durationMs, and event "call_ended"
     - Ensure each entry is newline-delimited JSON (NDJSON format)
@@ -89,11 +89,11 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - **Property 8: Audit entry completeness and NDJSON format** — generate arbitrary AuditEntry records (including strings with newlines, quotes, special characters), verify output is single-line valid JSON with all required fields
     - **Validates: Requirements 12.2, 12.4**
 
-- [ ] 3. Checkpoint - Core modules verification
+- [x] 3. Checkpoint - Core modules verification
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Implement LLM integration and WebSocket handling
-  - [ ] 4.1 Implement LLM Client module
+- [x] 4. Implement LLM integration and WebSocket handling
+  - [x] 4.1 Implement LLM Client module
     - Create `server/src/llm-client.ts` wrapping the OpenAI SDK
     - Implement `generateResponse(session: CallSession)` that sends system prompt + full transcript to GPT-4.1-mini (model configurable via `OPENAI_MODEL` env var, default `gpt-4.1-mini`)
     - Handle OpenAI function calling (tools): define `lookup_patient`, `get_available_slots`, `book_appointment`, `transfer_to_nurse` as tool definitions
@@ -102,7 +102,7 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - When `lookup_patient` succeeds, call `session.setPatientContext()` with the patient data
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 17.1, 17.2_
 
-  - [ ] 4.2 Implement WebSocket handler and event router
+  - [x] 4.2 Implement WebSocket handler and event router
     - Create `server/src/websocket-handler.ts` that upgrades HTTP connections on `/llm-websocket/:call_id` to WebSocket
     - On connection: extract `call_id` from URL path, create new `CallSession`
     - On message: parse JSON, route by `interaction_type`
@@ -127,8 +127,8 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - Test multi-turn conversation: verify state accumulates correctly
     - _Requirements: 2.2, 2.3, 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 5. Wire everything together in the server entry point
-  - [ ] 5.1 Create the main server entry point
+- [x] 5. Wire everything together in the server entry point
+  - [x] 5.1 Create the main server entry point
     - Create `server/src/server.ts` that creates Express app, mounts GET `/` health check returning `{ status: "healthy", timestamp: string }`
     - Create HTTP server from Express app
     - Attach WebSocket server (from `websocket-handler.ts`) to the HTTP server
@@ -136,12 +136,12 @@ Build a Node.js/TypeScript WebSocket server implementing the Retell AI Custom LL
     - Log startup message to stdout
     - _Requirements: 1.5, 2.1, 2.2, 2.3, 3.1_
 
-  - [ ] 5.2 Add environment configuration
+  - [x] 5.2 Add environment configuration
     - Update the root `.env.local.example` to add `OPENAI_API_KEY` and `OPENAI_MODEL=gpt-4.1-mini` entries (below the existing `AWS_PROFILE`)
     - Document in a `server/README.md`: setup instructions, how to run with `npm run dev`, note that env vars are loaded via direnv from `.env.local`, ngrok usage for exposing to Retell
     - _Requirements: 1.4, 1.5, 6.5_
 
-- [ ] 6. Final checkpoint - Full integration verification
+- [x] 6. Final checkpoint - Full integration verification
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

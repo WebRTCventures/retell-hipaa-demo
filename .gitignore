@@ -14,3 +14,4 @@ terraform/.terraform.lock.hcl
 
 # Nix build results
 result
+node_modules
