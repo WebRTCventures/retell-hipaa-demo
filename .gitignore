@@ -1,0 +1,16 @@
+# direnv
+.direnv/
+
+# Local env overrides (secrets, profiles)
+.env.local
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfplan
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
+
+# Nix build results
+result
