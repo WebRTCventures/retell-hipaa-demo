@@ -100,6 +100,11 @@ resource "aws_instance" "freepbx" {
   key_name               = var.key_pair_name
   user_data              = file("${path.module}/user_data.sh")
 
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
+
   tags = merge(local.tags, {
     Name = "freepbx-instance"
   })
