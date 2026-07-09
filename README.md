@@ -1,6 +1,16 @@
-# HIPAA-Compliant Voice AI Patient Intake — Retell AI + FreePBX Demo
+# Voice AI Patient Intake with HIPAA Safeguards — Retell AI + FreePBX Demo
 
-A working demo of a voice AI agent handling patient intake calls with HIPAA compliance enforcement. A patient calls in through FreePBX (on EC2), the call routes to Retell AI via SIP trunk, and a Custom LLM server validates every response against compliance rules before it's spoken.
+A working demo of a voice AI agent handling patient intake calls with HIPAA compliance in mind. A patient calls in through FreePBX (on EC2), the call routes to Retell AI via SIP trunk, and a Custom LLM server validates every response against compliance rules before it's spoken.
+
+The demo implements several layers toward that goal:
+
+- **Response compliance enforcement** — mandatory HIPAA disclosure on every call, PHI redaction, and medical advice blocking with automatic transfer to clinical staff
+- **Per-turn audit trail** — structured NDJSON logging of every interaction (input, raw LLM output, compliance action taken, final spoken response) plus call-level summaries
+- **Identity verification** — patient records are only accessible after name + date of birth verification via function calling
+- **Network least-privilege** — Terraform security groups restrict SIP/RTP to Retell AI IP ranges and admin access (SSH, HTTPS) to a single operator IP
+- **Partial encryption in transit** — The Custom LLM WebSocket connection runs over TLS (ngrok tunnel). The FreePBX SIP trunk requests `transport=tls` but no certificate or SRTP is provisioned on the instance, so voice media is unencrypted (see [Intentional Simplifications](#intentional-simplifications))
+
+> **Scope:** Full HIPAA compliance is a broad undertaking — it requires encryption at rest, comprehensive role-based access controls, workforce training, breach notification procedures, and a signed Business Associate Agreement (BAA) with every data processor. This demo focuses on the aspects listed above. The remaining requirements are out of scope here and would need to be addressed for a production deployment. See [Intentional Simplifications](#intentional-simplifications) for a full gap list.
 
 ```
 ┌──────────────┐     SIP Trunk      ┌──────────────────┐
@@ -317,9 +327,9 @@ Watch the terminal running the Custom LLM server. Each turn produces a structure
 
 ---
 
-## 7. Compliance Rules
+## 7. Response Compliance Rules
 
-The server enforces three rules on every LLM response before it reaches the caller:
+The server enforces three rules on every LLM response before it reaches the caller. Combined with per-turn audit logging and identity verification, these guardrails demonstrate how a compliance layer can sit between the LLM and the caller to enforce privacy and safety policies in real time.
 
 | Rule | Trigger | Action |
 |------|---------|--------|
@@ -382,7 +392,7 @@ npm test
 
 ## Intentional Simplifications
 
-This is a demo. The following would need to change for production:
+This demo implements several HIPAA-relevant controls (response compliance, audit logging, identity verification, network restrictions, TLS in transit) but is not a fully compliant system. Full HIPAA compliance additionally requires encryption at rest, role-based access controls, signed BAAs with all processors, workforce training, and breach notification procedures. The following table highlights the specific gaps between this demo and what production would require:
 
 | Demo | Production |
 |------|-----------|
@@ -394,6 +404,7 @@ This is a demo. The following would need to change for production:
 | Single AZ, no redundancy | Multi-AZ with failover for telephony workloads |
 | ngrok provides TLS | ACM certificate on your own domain |
 | Hardcoded patient data | Real patient lookup with proper auth + access controls |
+| No TLS cert or SRTP on FreePBX — media (RTP) is unencrypted | Provision a real TLS cert on Asterisk, enable SRTP for encrypted media |
 
 ---
 
