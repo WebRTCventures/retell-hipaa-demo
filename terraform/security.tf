@@ -11,15 +11,28 @@ resource "aws_security_group" "freepbx" {
   })
 }
 
-# SIP ingress rules - one per Retell IP range
+# SIP ingress rules (TCP) - one per Retell IP range
 resource "aws_security_group_rule" "sip_ingress" {
   for_each = toset(local.retell_ip_ranges)
 
   type              = "ingress"
-  description       = "SIP signaling from Retell AI (${each.value})"
+  description       = "SIP signaling TCP from Retell AI (${each.value})"
   from_port         = local.sip_ports.from_port
   to_port           = local.sip_ports.to_port
   protocol          = local.sip_ports.protocol
+  cidr_blocks       = [each.value]
+  security_group_id = aws_security_group.freepbx.id
+}
+
+# SIP ingress rules (UDP) - one per Retell IP range
+resource "aws_security_group_rule" "sip_udp_ingress" {
+  for_each = toset(local.retell_ip_ranges)
+
+  type              = "ingress"
+  description       = "SIP signaling UDP from Retell AI (${each.value})"
+  from_port         = local.sip_ports_udp.from_port
+  to_port           = local.sip_ports_udp.to_port
+  protocol          = local.sip_ports_udp.protocol
   cidr_blocks       = [each.value]
   security_group_id = aws_security_group.freepbx.id
 }
@@ -55,6 +68,50 @@ resource "aws_security_group_rule" "ssh_ingress" {
   from_port         = 22
   to_port           = 22
   protocol          = "tcp"
+  cidr_blocks       = [var.admin_ip]
+  security_group_id = aws_security_group.freepbx.id
+}
+
+# SIP-TLS ingress from admin IP - softphone registration
+resource "aws_security_group_rule" "sip_tls_admin_ingress" {
+  type              = "ingress"
+  description       = "SIP-TLS from admin softphone"
+  from_port         = 5061
+  to_port           = 5061
+  protocol          = "tcp"
+  cidr_blocks       = [var.admin_ip]
+  security_group_id = aws_security_group.freepbx.id
+}
+
+# SIP-UDP ingress from admin IP - softphone registration (fallback)
+resource "aws_security_group_rule" "sip_udp_admin_ingress" {
+  type              = "ingress"
+  description       = "SIP-UDP from admin softphone"
+  from_port         = 5060
+  to_port           = 5060
+  protocol          = "udp"
+  cidr_blocks       = [var.admin_ip]
+  security_group_id = aws_security_group.freepbx.id
+}
+
+# SIP-TCP ingress from admin IP - softphone registration (fallback)
+resource "aws_security_group_rule" "sip_tcp_admin_ingress" {
+  type              = "ingress"
+  description       = "SIP-TCP from admin softphone"
+  from_port         = 5060
+  to_port           = 5060
+  protocol          = "tcp"
+  cidr_blocks       = [var.admin_ip]
+  security_group_id = aws_security_group.freepbx.id
+}
+
+# RTP ingress from admin IP - softphone media
+resource "aws_security_group_rule" "rtp_admin_ingress" {
+  type              = "ingress"
+  description       = "RTP/SRTP media from admin softphone"
+  from_port         = local.rtp_ports.from_port
+  to_port           = local.rtp_ports.to_port
+  protocol          = local.rtp_ports.protocol
   cidr_blocks       = [var.admin_ip]
   security_group_id = aws_security_group.freepbx.id
 }

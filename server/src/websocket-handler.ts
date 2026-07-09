@@ -114,10 +114,11 @@ async function handleResponseRequired(
   event: ResponseRequiredEvent
 ): Promise<void> {
   session.updateTranscript(event.transcript);
-  session.incrementTurn();
 
   const llmResult = await generateResponse(session);
   const complianceResult = validate(llmResult.content, session);
+
+  session.incrementTurn();
 
   const responseEvent = {
     response_type: "response" as const,

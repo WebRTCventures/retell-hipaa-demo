@@ -30,6 +30,12 @@ locals {
     protocol  = "tcp"
   }
 
+  sip_ports_udp = {
+    from_port = 5060
+    to_port   = 5060
+    protocol  = "udp"
+  }
+
   rtp_ports = {
     from_port = 10000
     to_port   = 20000

@@ -8,7 +8,7 @@ The demo implements several layers toward that goal:
 - **Per-turn audit trail** — structured NDJSON logging of every interaction (input, raw LLM output, compliance action taken, final spoken response) plus call-level summaries
 - **Identity verification** — patient records are only accessible after name + date of birth verification via function calling
 - **Network least-privilege** — Terraform security groups restrict SIP/RTP to Retell AI IP ranges and admin access (SSH, HTTPS) to a single operator IP
-- **Partial encryption in transit** — The Custom LLM WebSocket connection runs over TLS (ngrok tunnel). The FreePBX SIP trunk requests `transport=tls` but no certificate or SRTP is provisioned on the instance, so voice media is unencrypted (see [Intentional Simplifications](#intentional-simplifications))
+- **Encryption in transit** — all data paths encrypted: SIP signaling via TLS, voice media via SRTP (both softphone↔FreePBX and FreePBX↔Retell legs), WebSocket via TLS (ngrok tunnel), and OpenAI API calls over HTTPS
 
 > **Scope:** Full HIPAA compliance is a broad undertaking — it requires encryption at rest, comprehensive role-based access controls, workforce training, breach notification procedures, and a signed Business Associate Agreement (BAA) with every data processor. This demo focuses on the aspects listed above. The remaining requirements are out of scope here and would need to be addressed for a production deployment. See [Intentional Simplifications](#intentional-simplifications) for a full gap list.
 
@@ -135,8 +135,10 @@ ssh_command        = "ssh admin@54.xx.xx.xx"
 - EC2 instance (Debian 12) running FreePBX 17 (installed automatically via user_data)
 - Elastic IP for a stable public address
 - Security group allowing:
-  - SIP (TCP 5060-5061) from Retell IP ranges
+  - SIP (TCP 5060-5061 + UDP 5060) from Retell IP ranges — TCP 5061 used for TLS transport
   - RTP (UDP 10000-20000) from Retell IP ranges
+  - SIP-TLS (TCP 5061) from your IP — softphone registration
+  - RTP (UDP 10000-20000) from your IP — softphone media
   - HTTPS (443) from your IP only
   - SSH (22) from your IP only
 
@@ -157,44 +159,135 @@ tail -f /var/log/freepbx-install.log
 
 ## 2. FreePBX SIP Trunk Configuration
 
-Once FreePBX is accessible at the admin URL, configure it to route calls to Retell AI.
+Once FreePBX is accessible at the admin URL, configure it to route calls to Retell AI over TLS.
 
-### Create the SIP Trunk
+### Enable TLS Transport
 
-1. Log in to FreePBX web admin (`https://<freepbx_public_ip>`)
-2. Navigate to **Connectivity → Trunks → Add Trunk → Add SIP Trunk**
-3. Configure:
+FreePBX 17 only enables UDP by default. To use TLS for SIP signaling (encrypting call setup between FreePBX and Retell):
 
-   - **Trunk Name:** `retell-ai`
-   - **Peer Details:**
-     ```
-     host=sip.retellai.com
-     type=peer
-     transport=tls
-     qualify=yes
-     ```
-   - **Registration:** Leave empty (Retell doesn't require registration from your side)
+1. **Install Retell's root CA certificate** — SSH into FreePBX and download it (per [Retell's custom telephony docs](https://docs.retellai.com/deploy/custom-telephony)):
+   ```bash
+   sudo wget https://www.amazontrust.com/repository/G2-RootCA1.pem \
+     -O /etc/asterisk/keys/retell-ca.pem
+   sudo chown asterisk:asterisk /etc/asterisk/keys/retell-ca.pem
+   sudo chmod 644 /etc/asterisk/keys/retell-ca.pem
+   ```
+   This lets Asterisk verify Retell's server certificate during the TLS handshake.
+
+2. **Create a certificate in FreePBX** (if one doesn't already exist):
+   - Go to **Admin → Certificate Management**
+   - FreePBX creates a default self-signed certificate on first login — confirm it's listed
+   - If not, click **New Certificate → Generate Self-Signed Certificate**, give it a name, and submit
+
+3. **Enable TLS transport:**
+   - Go to **Settings → Asterisk SIP Settings → SIP Settings [chan_pjsip]**
+   - Click **Show Advanced Settings** → Yes (in Misc PJSip Settings)
+   - In **TLS/SSL/SRTP Settings**:
+     - Certificate Manager: select your certificate
+     - SSL Method: `tlsv1_2`
+     - Verify Client: `No`
+     - Verify Server: `Yes`
+   - In **Transports**: enable `tls - 0.0.0.0 - All` → Yes
+   - Click **Submit**, then **Apply Config**
+
+4. **Restart Asterisk** (required for transport changes):
+   ```bash
+   sudo systemctl restart asterisk
+   ```
+
+After this, the TLS transport option will appear in the trunk dropdown.
+
+### Create the PJSIP Trunk
+
+1. Navigate to **Connectivity → Trunks → Add Trunk → Add PJSIP Trunk**
+
+#### General tab
+
+| Field | Value |
+|-------|-------|
+| Trunk Name | `retell-ai` |
+| Hide CallerID | No |
+| CID Options | Allow Any CID |
+| Continue if Busy | No |
+| Disable Trunk | No |
+
+#### pjsip Settings tab → General
+
+| Field | Value |
+|-------|-------|
+| Username | *(leave blank)* |
+| Auth username | *(leave blank)* |
+| Secret | *(leave blank)* |
+| Authentication | **None** |
+| Registration | **None** |
+| SIP Server | `sip.retellai.com` |
+| SIP Server Port | `5061` |
+| Context | `from-pstn` |
+| Transport | `0.0.0.0-tls` |
+
+> **Note:** Authentication is set to None because Retell identifies your trunk by source IP (your Elastic IP), not credentials. Registration is None because Retell doesn't require it.
+
+#### pjsip Settings tab → Advanced
+
+| Field | Value |
+|-------|-------|
+| Media Encryption | `SRTP via in-SDP` |
+
+This ensures voice audio between FreePBX and Retell is encrypted with SRTP. Retell supports SRTP when the transport is TLS.
 
 ### Create an Extension
 
-1. Navigate to **Applications → Extensions → Add Extension → Add New SIP Extension**
-2. Set an extension number (e.g., `1001`) and a password
+1. Navigate to **Connectivity → Extensions**
+2. Click **+ Add Extension → Add New SIP [chan_pjsip] Extension**
+3. Set an extension number (e.g., `1001`) and a password
+4. Go to the **Advanced** tab and configure encryption:
+
+| Field | Value |
+|-------|-------|
+| Transport | `0.0.0.0-tls` |
+| Media Encryption | `SRTP via in-SDP` |
+| Allow Non-Encrypted Media | `No` |
+| Direct Media | `No` |
+
+4. Submit and apply config
+
+This encrypts the leg between your softphone and FreePBX (both signaling via TLS and audio via SRTP).
+
+### Create an Outbound Route
+
+This routes calls from your softphone to Retell AI via the trunk.
+
+1. Navigate to **Connectivity → Outbound Routes → Add Outbound Route**
+2. Configure:
+   - **Route Name:** `retell-outbound`
+   - **Trunk Sequence:** select `retell-ai (pjsip)`
+   - **Dial Patterns:** add a pattern that matches what you'll dial (e.g., `X.` to match any number)
 3. Submit and apply config
 
 ### Create an Inbound Route
 
-1. Navigate to **Connectivity → Inbound Routes → Add Inbound Route**
-2. Set the DID pattern to match your test extension
-3. Set destination to the trunk or a custom context:
+This tells FreePBX what to do when Retell sends a call back (or for testing).
 
-   ```
-   [retell-outbound]
-   exten => _X.,1,Dial(SIP/retell-ai/${EXTEN})
-   ```
+1. Navigate to **Connectivity → Inbound Routes → Add Incoming Route**
+2. Configure:
+   - **Description:** `retell-inbound`
+   - **DID Number:** `ANY`
+   - **Set Destination:** Trunks → `retell-ai (pjsip)`
+3. Submit and apply config
 
 ### Register a Softphone
 
-Configure your softphone (Zoiper, Linphone) to register against FreePBX using the extension you created. The SIP server is the FreePBX Elastic IP.
+Configure your softphone (Zoiper, Linphone) to register against FreePBX using the extension you created:
+
+| Setting | Value |
+|---------|-------|
+| SIP Server | FreePBX Elastic IP |
+| Port | `5061` |
+| Transport | `TLS` |
+| SRTP / Media Encryption | `Enabled` / `Required` |
+| Certificate verification | Accept the self-signed certificate when prompted |
+
+> **Note:** Since FreePBX uses a self-signed certificate, your softphone will warn you about an untrusted cert on first connection. This is expected — accept it. The connection is still encrypted, just not authenticated by a public CA. Both endpoints are under your control.
 
 ### Verify
 
@@ -404,7 +497,6 @@ This demo implements several HIPAA-relevant controls (response compliance, audit
 | Single AZ, no redundancy | Multi-AZ with failover for telephony workloads |
 | ngrok provides TLS | ACM certificate on your own domain |
 | Hardcoded patient data | Real patient lookup with proper auth + access controls |
-| No TLS cert or SRTP on FreePBX — media (RTP) is unencrypted | Provision a real TLS cert on Asterisk, enable SRTP for encrypted media |
 
 ---
 
