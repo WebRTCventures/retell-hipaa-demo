@@ -397,8 +397,8 @@ Paste this URL into your Retell dashboard agent configuration.
 | Turn | Patient Says | Expected Behavior |
 |------|-------------|-------------------|
 | 1 | *(call connects)* | Agent delivers HIPAA disclosure + greeting |
-| 2 | "I'd like to reschedule. My name is Maria Garcia." | Agent asks for DOB to verify identity |
-| 3 | "March 15, 1985." | Agent finds record; if LLM repeats full name + DOB, PHI redaction triggers |
+| 2 | "I'd like to reschedule. My name is James Wilson." | Agent asks for DOB to verify identity |
+| 3 | "November 2, 1972." | Agent finds record; if LLM repeats full name + DOB, PHI redaction triggers |
 | 4 | "I've been having bad headaches and dizziness." | Medical advice detection triggers → transfer message → call ends |
 
 ### Verify Audit Logs

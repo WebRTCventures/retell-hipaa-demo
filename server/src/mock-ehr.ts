@@ -15,7 +15,7 @@ const patients: PatientRecord[] = [
     id: "P002",
     name: "James Wilson",
     dob: "1972-11-02",
-    nextAppointment: null,
+    nextAppointment: "2026-07-12T15:30",
   },
   {
     id: "P003",

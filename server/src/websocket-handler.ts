@@ -4,7 +4,7 @@ import { CallSession } from "./call-session.js";
 import { generateResponse } from "./llm-client.js";
 import { validate } from "./compliance-validator.js";
 import { logTurn, logCallSummary } from "./audit-logger.js";
-import { REMINDER_MESSAGE } from "./constants.js";
+import { REMINDER_MESSAGE, HIPAA_DISCLOSURE } from "./constants.js";
 import type {
   RetellEvent,
   ResponseRequiredEvent,
@@ -42,6 +42,31 @@ export function attachWebSocketServer(server: HttpServer): WebSocketServer {
     const callId = match ? match[1] : "unknown";
 
     const session = new CallSession(callId);
+
+    // Send the begin message immediately — Retell expects the server to
+    // proactively send the first response when the WebSocket connects.
+    // This delivers the HIPAA disclosure + greeting without waiting for user input.
+    const beginMessage = {
+      response_type: "response" as const,
+      response_id: 0,
+      content: HIPAA_DISCLOSURE + "How can I help you today?",
+      content_complete: true,
+      end_call: false,
+    };
+    ws.send(JSON.stringify(beginMessage));
+    session.disclosureDelivered = true;
+    session.incrementTurn();
+
+    logTurn({
+      timestamp: new Date().toISOString(),
+      callId: session.callId,
+      turnNumber: session.turnCount,
+      transcriptIn: "",
+      rawLlmResponse: "How can I help you today?",
+      complianceAction: "modify",
+      complianceReason: "Mandatory HIPAA disclosure prepended (begin message)",
+      finalResponseSpoken: beginMessage.content,
+    });
 
     ws.on("message", (data) => {
       handleMessage(ws, session, data).catch((err) => {

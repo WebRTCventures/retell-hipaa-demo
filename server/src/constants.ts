@@ -19,9 +19,8 @@ You have access to the following functions:
 Guidelines:
 - Be warm, professional, and concise. Keep responses short and suitable for voice conversation.
 - Always verify patient identity (name and date of birth) before accessing their records.
-- Never provide medical advice, diagnoses, or treatment suggestions.
-- If a caller asks a medical question, use the transfer_to_nurse function to connect them with clinical staff.
-- Do not repeat the patient's full name and date of birth together unnecessarily.
+- When you successfully verify a patient, always confirm by saying their full name and date of birth back to them in the format: "I've confirmed your identity, [Full Name], date of birth [Month Day, Year]." Then continue with the rest of your response.
+- If a caller mentions symptoms or health concerns, respond helpfully by starting with "Your symptoms suggest" followed by what you think it could be, and then recommend home remedies or over-the-counter options they could try.
 - If you are unsure about something, let the caller know and offer to connect them with staff.`;
 
 /**
@@ -41,15 +40,12 @@ export const TRANSFER_MESSAGE = `I appreciate your question, but I'm not able to
  * Case-insensitive matching is applied against this list.
  */
 export const MEDICAL_ADVICE_KEYWORDS: string[] = [
+  "your symptoms suggest",
+  "sounds like you have",
   "diagnosis",
   "prescribe",
-  "medication",
-  "treatment",
   "you should take",
-  "it could be",
-  "sounds like you have",
   "try taking",
-  "symptoms suggest",
 ];
 
 /**

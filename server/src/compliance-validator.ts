@@ -43,16 +43,32 @@ export function validate(response: string, session: CallSession): ComplianceResu
   }
 
   // Rule 3 — PHI redaction
+  // If the response contains both the patient's full name AND date of birth,
+  // remove the sentence containing the PHI and replace with a generic confirmation.
   if (session.patientContext) {
     const { fullName, dob } = session.patientContext;
+
+    // Check for DOB in both ISO format and natural language variants
+    const dobFormats = getDobFormats(dob);
+    const matchedDob = dobFormats.find((format) =>
+      currentResponse.toLowerCase().includes(format.toLowerCase())
+    );
     const responseContainsFullName = currentResponse
       .toLowerCase()
       .includes(fullName.toLowerCase());
-    const responseContainsDob = currentResponse.includes(dob);
 
-    if (responseContainsFullName && responseContainsDob) {
-      // Remove all occurrences of the DOB string
-      currentResponse = currentResponse.split(dob).join("");
+    if (responseContainsFullName && matchedDob) {
+      // Split into sentences and remove any sentence containing both name and DOB
+      const sentences = currentResponse.split(/(?<=[.!?])\s+/);
+      const filtered = sentences.filter((sentence) => {
+        const lower = sentence.toLowerCase();
+        const hasDob = dobFormats.some((f) => lower.includes(f.toLowerCase()));
+        const hasName = lower.includes(fullName.toLowerCase());
+        return !(hasDob && hasName);
+      });
+
+      // Prepend a generic identity confirmation
+      currentResponse = "I've verified your identity. " + filtered.join(" ");
       action = "modify";
       reason = reason
         ? `${reason}; Unnecessary PHI repetition redacted`
@@ -67,4 +83,26 @@ export function validate(response: string, session: CallSession): ComplianceResu
     action,
     reason: reason || "Response passed compliance checks",
   };
+}
+
+/**
+ * Generates multiple date format strings from an ISO date (YYYY-MM-DD)
+ * to match how an LLM might naturally say a date in conversation.
+ */
+function getDobFormats(isoDob: string): string[] {
+  const [year, month, day] = isoDob.split("-").map(Number);
+
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  const monthName = monthNames[month - 1];
+
+  return [
+    isoDob, // 1985-03-15
+    `${monthName} ${day}, ${year}`, // March 15, 1985
+    `${monthName} ${day} ${year}`, // March 15 1985
+    `${month}/${day}/${year}`, // 3/15/1985
+    `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${year}`, // 03/15/1985
+  ];
 }
