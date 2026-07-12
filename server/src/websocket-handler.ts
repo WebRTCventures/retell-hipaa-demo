@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server as HttpServer, IncomingMessage } from "node:http";
 import { CallSession } from "./call-session.js";
 import { generateResponse } from "./llm-client.js";
-import { validate } from "./compliance-validator.js";
+import { validate, redactSentence } from "./compliance-validator.js";
 import { logTurn, logCallSummary } from "./audit-logger.js";
 import { REMINDER_MESSAGE, HIPAA_DISCLOSURE } from "./constants.js";
 import type {
@@ -43,9 +43,7 @@ export function attachWebSocketServer(server: HttpServer): WebSocketServer {
 
     const session = new CallSession(callId);
 
-    // Send the begin message immediately — Retell expects the server to
-    // proactively send the first response when the WebSocket connects.
-    // This delivers the HIPAA disclosure + greeting without waiting for user input.
+    // Send the begin message immediately — delivers HIPAA disclosure + greeting
     const beginMessage = {
       response_type: "response" as const,
       response_id: 0,
@@ -130,8 +128,8 @@ async function handleMessage(
 
 /**
  * Handles `response_required` events:
- * Updates transcript, increments turn, generates LLM response,
- * runs compliance validation, sends response, and logs the audit entry.
+ * Generates the LLM response, streams it sentence-by-sentence to Retell
+ * with per-sentence PHI redaction, then logs the complete turn.
  */
 async function handleResponseRequired(
   ws: WebSocket,
@@ -140,26 +138,40 @@ async function handleResponseRequired(
 ): Promise<void> {
   session.updateTranscript(event.transcript);
 
+  // Generate the full response (includes function calling loop)
   const llmResult = await generateResponse(session);
-  const complianceResult = validate(llmResult.content, session);
+
+  // Split into sentences for streaming with per-sentence PHI redaction
+  const sentences = llmResult.content.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const spokenSentences: string[] = [];
+
+  for (let i = 0; i < sentences.length; i++) {
+    const { output } = redactSentence(sentences[i], session);
+    spokenSentences.push(output);
+
+    const isLast = i === sentences.length - 1;
+
+    const responseEvent = {
+      response_type: "response" as const,
+      response_id: event.response_id,
+      content: output,
+      content_complete: isLast,
+      end_call: false,
+    };
+
+    ws.send(JSON.stringify(responseEvent));
+  }
 
   session.incrementTurn();
 
-  const responseEvent = {
-    response_type: "response" as const,
-    response_id: event.response_id,
-    content: complianceResult.finalResponse,
-    content_complete: true,
-    end_call: complianceResult.action === "block_and_transfer",
-  };
-
-  ws.send(JSON.stringify(responseEvent));
-
-  // Determine the last user message from transcript for the audit entry
+  // Log the complete turn after all sentences have been streamed
   const lastUserMessage =
     event.transcript
       .filter((entry) => entry.role === "user")
       .pop()?.content ?? "";
+
+  const finalResponseSpoken = spokenSentences.join(" ");
+  const wasRedacted = finalResponseSpoken !== llmResult.content;
 
   const auditEntry: AuditEntry = {
     timestamp: new Date().toISOString(),
@@ -167,17 +179,18 @@ async function handleResponseRequired(
     turnNumber: session.turnCount,
     transcriptIn: lastUserMessage,
     rawLlmResponse: llmResult.content,
-    complianceAction: complianceResult.action,
-    complianceReason: complianceResult.reason,
-    finalResponseSpoken: complianceResult.finalResponse,
+    complianceAction: wasRedacted ? "modify" : "pass",
+    complianceReason: wasRedacted
+      ? "Unnecessary PHI repetition redacted"
+      : "Response passed compliance checks",
+    finalResponseSpoken,
   };
 
   logTurn(auditEntry);
 }
 
 /**
- * Handles `reminder_required` events:
- * Sends REMINDER_MESSAGE as the response.
+ * Handles `reminder_required` events.
  */
 function handleReminderRequired(
   ws: WebSocket,
@@ -190,21 +203,18 @@ function handleReminderRequired(
     content_complete: true,
     end_call: false,
   };
-
   ws.send(JSON.stringify(responseEvent));
 }
 
 /**
- * Handles `update_only` events:
- * Updates session transcript without generating a response.
+ * Handles `update_only` events.
  */
 function handleUpdateOnly(session: CallSession, event: UpdateOnlyEvent): void {
   session.updateTranscript(event.transcript);
 }
 
 /**
- * Handles `ping_pong` events:
- * Echoes back with matching timestamp.
+ * Handles `ping_pong` events.
  */
 function handlePingPong(ws: WebSocket, event: PingPongEvent): void {
   ws.send(JSON.stringify({ response_type: "ping_pong", timestamp: event.timestamp }));

@@ -1,87 +1,83 @@
 import type { ComplianceResult } from "./types.js";
 import type { CallSession } from "./call-session.js";
-import {
-  HIPAA_DISCLOSURE,
-  TRANSFER_MESSAGE,
-  MEDICAL_ADVICE_KEYWORDS,
-} from "./constants.js";
 
 /**
- * Validates an LLM-generated response against three sequential compliance rules:
- * 1. Disclosure injection (first turn only)
- * 2. Medical advice detection (blocks and short-circuits)
- * 3. PHI redaction (removes DOB when full name + DOB are both present)
+ * Checks a single sentence for unnecessary PHI repetition.
+ * If the sentence contains both the patient's full name AND date of birth,
+ * it's replaced with a generic identity confirmation.
  *
- * Returns a ComplianceResult describing what action was taken.
+ * Returns the sentence unchanged if no PHI issue is found,
+ * or a redacted version if both name + DOB are present.
+ */
+export function redactSentence(sentence: string, session: CallSession): {
+  redacted: boolean;
+  output: string;
+} {
+  if (!session.patientContext) {
+    return { redacted: false, output: sentence };
+  }
+
+  const { fullName, dob } = session.patientContext;
+  const lower = sentence.toLowerCase();
+
+  const dobFormats = getDobFormats(dob);
+  const hasDob = dobFormats.some((f) => lower.includes(f.toLowerCase()));
+  const hasName = lower.includes(fullName.toLowerCase());
+
+  if (hasName && hasDob) {
+    return { redacted: true, output: "I've verified your identity." };
+  }
+
+  return { redacted: false, output: sentence };
+}
+
+/**
+ * Validates a complete LLM response against compliance rules.
+ * Used for audit logging after the full response has been streamed.
+ *
+ * Rules:
+ * 1. PHI redaction — sentences containing both full name and DOB are replaced
  */
 export function validate(response: string, session: CallSession): ComplianceResult {
   const originalResponse = response;
-  let currentResponse = response;
-  let action: ComplianceResult["action"] = "pass";
-  let reason = "";
 
-  // Rule 1 — Disclosure injection
-  if (session.turnCount === 0 && !session.disclosureDelivered) {
-    currentResponse = HIPAA_DISCLOSURE + currentResponse;
-    session.disclosureDelivered = true;
-    action = "modify";
-    reason = "Mandatory HIPAA disclosure prepended";
+  if (!session.patientContext) {
+    return {
+      approved: true,
+      originalResponse,
+      finalResponse: response,
+      action: "pass",
+      reason: "Response passed compliance checks",
+    };
   }
 
-  // Rule 2 — Medical advice detection (case-insensitive)
-  const lowerResponse = currentResponse.toLowerCase();
-  for (const keyword of MEDICAL_ADVICE_KEYWORDS) {
-    if (lowerResponse.includes(keyword.toLowerCase())) {
-      return {
-        approved: false,
-        originalResponse,
-        finalResponse: TRANSFER_MESSAGE,
-        action: "block_and_transfer",
-        reason: `Medical advice detected: ${keyword}`,
-      };
+  const { fullName, dob } = session.patientContext;
+  const dobFormats = getDobFormats(dob);
+  const sentences = response.split(/(?<=[.!?])\s+/);
+  let wasRedacted = false;
+
+  const processed = sentences.map((sentence) => {
+    const lower = sentence.toLowerCase();
+    const hasDob = dobFormats.some((f) => lower.includes(f.toLowerCase()));
+    const hasName = lower.includes(fullName.toLowerCase());
+
+    if (hasName && hasDob) {
+      wasRedacted = true;
+      return "I've verified your identity.";
     }
-  }
+    return sentence;
+  });
 
-  // Rule 3 — PHI redaction
-  // If the response contains both the patient's full name AND date of birth,
-  // remove the sentence containing the PHI and replace with a generic confirmation.
-  if (session.patientContext) {
-    const { fullName, dob } = session.patientContext;
-
-    // Check for DOB in both ISO format and natural language variants
-    const dobFormats = getDobFormats(dob);
-    const matchedDob = dobFormats.find((format) =>
-      currentResponse.toLowerCase().includes(format.toLowerCase())
-    );
-    const responseContainsFullName = currentResponse
-      .toLowerCase()
-      .includes(fullName.toLowerCase());
-
-    if (responseContainsFullName && matchedDob) {
-      // Split into sentences and remove any sentence containing both name and DOB
-      const sentences = currentResponse.split(/(?<=[.!?])\s+/);
-      const filtered = sentences.filter((sentence) => {
-        const lower = sentence.toLowerCase();
-        const hasDob = dobFormats.some((f) => lower.includes(f.toLowerCase()));
-        const hasName = lower.includes(fullName.toLowerCase());
-        return !(hasDob && hasName);
-      });
-
-      // Prepend a generic identity confirmation
-      currentResponse = "I've verified your identity. " + filtered.join(" ");
-      action = "modify";
-      reason = reason
-        ? `${reason}; Unnecessary PHI repetition redacted`
-        : "Unnecessary PHI repetition redacted";
-    }
-  }
+  const finalResponse = processed.join(" ");
 
   return {
     approved: true,
     originalResponse,
-    finalResponse: currentResponse,
-    action,
-    reason: reason || "Response passed compliance checks",
+    finalResponse,
+    action: wasRedacted ? "modify" : "pass",
+    reason: wasRedacted
+      ? "Unnecessary PHI repetition redacted"
+      : "Response passed compliance checks",
   };
 }
 

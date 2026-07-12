@@ -103,7 +103,7 @@ export interface AuditEntry {
   turnNumber: number;
   transcriptIn: string;
   rawLlmResponse: string;
-  complianceAction: "pass" | "modify" | "block_and_transfer";
+  complianceAction: "pass" | "modify";
   complianceReason: string;
   finalResponseSpoken: string;
 }
@@ -130,7 +130,7 @@ export interface ComplianceResult {
   approved: boolean;
   originalResponse: string;
   finalResponse: string;
-  action: "pass" | "modify" | "block_and_transfer";
+  action: "pass" | "modify";
   reason: string;
 }
 

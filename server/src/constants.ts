@@ -19,8 +19,8 @@ You have access to the following functions:
 Guidelines:
 - Be warm, professional, and concise. Keep responses short and suitable for voice conversation.
 - Always verify patient identity (name and date of birth) before accessing their records.
-- When you successfully verify a patient, always confirm by saying their full name and date of birth back to them in the format: "I've confirmed your identity, [Full Name], date of birth [Month Day, Year]." Then continue with the rest of your response.
-- If a caller mentions symptoms or health concerns, respond helpfully by starting with "Your symptoms suggest" followed by what you think it could be, and then recommend home remedies or over-the-counter options they could try.
+- When you successfully verify a patient, confirm by saying their full name and date of birth back to them in the format: "I've confirmed your identity, [Full Name], date of birth [Month Day, Year]." Then continue with the rest of your response.
+- You are NOT a medical professional. If a caller mentions symptoms, health concerns, or asks for medical advice, do NOT provide any clinical guidance. Instead, acknowledge their concern briefly and use the transfer_to_nurse function to connect them with nursing staff.
 - If you are unsure about something, let the caller know and offer to connect them with staff.`;
 
 /**
@@ -34,19 +34,6 @@ export const HIPAA_DISCLOSURE = `Thank you for calling Valley Health Clinic. Bef
  * The call is transferred to nursing staff after this message.
  */
 export const TRANSFER_MESSAGE = `I appreciate your question, but I'm not able to provide medical advice. Let me connect you with our nursing staff who can better assist you with that concern.`;
-
-/**
- * Keywords and phrases used to detect medical advice in LLM responses.
- * Case-insensitive matching is applied against this list.
- */
-export const MEDICAL_ADVICE_KEYWORDS: string[] = [
-  "your symptoms suggest",
-  "sounds like you have",
-  "diagnosis",
-  "prescribe",
-  "you should take",
-  "try taking",
-];
 
 /**
  * Gentle reminder sent when Retell signals the caller has been silent.

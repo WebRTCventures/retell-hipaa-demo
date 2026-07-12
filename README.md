@@ -1,16 +1,16 @@
 # Voice AI Patient Intake with HIPAA Safeguards — Retell AI + FreePBX Demo
 
-A working demo of a voice AI agent handling patient intake calls with HIPAA compliance in mind. A patient calls in through FreePBX (on EC2), the call routes to Retell AI via SIP trunk, and a Custom LLM server validates every response against compliance rules before it's spoken.
+A working demo of a voice AI agent handling patient intake calls with HIPAA compliance in mind. A patient calls in through FreePBX (on EC2), the call routes to Retell AI via SIP trunk, and a Custom LLM server streams responses sentence-by-sentence with per-sentence PHI redaction and structured audit logging.
 
 The demo implements several layers toward that goal:
 
-- **Response compliance enforcement** — mandatory HIPAA disclosure on every call, PHI redaction, and medical advice blocking with automatic transfer to clinical staff
+- **Sentence-level PHI redaction** — responses are streamed to Retell sentence-by-sentence; any sentence containing the patient's full name and date of birth together is replaced before it's spoken
+- **Mandatory HIPAA disclosure** — delivered proactively on every call before the patient speaks
+- **Scope control via system prompt** — the LLM is instructed to never provide medical advice and to use the `transfer_to_nurse` function for clinical questions
 - **Per-turn audit trail** — structured NDJSON logging of every interaction (input, raw LLM output, compliance action taken, final spoken response) plus call-level summaries
 - **Identity verification** — patient records are only accessible after name + date of birth verification via function calling
 - **Network least-privilege** — Terraform security groups restrict SIP/RTP to Retell AI IP ranges and admin access (SSH, HTTPS) to a single operator IP
 - **Encryption in transit** — all data paths encrypted: SIP signaling via TLS, voice media via SRTP (both softphone↔FreePBX and FreePBX↔Retell legs), WebSocket via TLS (ngrok tunnel), and OpenAI API calls over HTTPS
-
-> **Scope:** Full HIPAA compliance is a broad undertaking — it requires encryption at rest, comprehensive role-based access controls, workforce training, breach notification procedures, and a signed Business Associate Agreement (BAA) with every data processor. This demo focuses on the aspects listed above. The remaining requirements are out of scope here and would need to be addressed for a production deployment. See [Intentional Simplifications](#intentional-simplifications) for a full gap list.
 
 ```
 ┌──────────────┐     SIP Trunk      ┌──────────────────┐
@@ -74,11 +74,11 @@ The demo implements several layers toward that goal:
 │   │   ├── server.ts              # Express + WebSocket entrypoint
 │   │   ├── websocket-handler.ts   # Retell event routing
 │   │   ├── llm-client.ts          # OpenAI integration
-│   │   ├── compliance-validator.ts # HIPAA rule enforcement
+│   │   ├── compliance-validator.ts # Per-sentence PHI redaction
 │   │   ├── call-session.ts        # Per-call state tracking
 │   │   ├── mock-ehr.ts            # In-memory patient/appointment data
 │   │   ├── audit-logger.ts        # Structured JSON logging
-│   │   ├── constants.ts           # Prompts, disclosures, keywords
+│   │   ├── constants.ts           # Prompts, disclosures, configuration
 │   │   └── types.ts               # TypeScript interfaces
 │   ├── package.json
 │   └── tsconfig.json
@@ -163,39 +163,31 @@ Once FreePBX is accessible at the admin URL, configure it to route calls to Rete
 
 ### Enable TLS Transport
 
-FreePBX 17 only enables UDP by default. To use TLS for SIP signaling (encrypting call setup between FreePBX and Retell):
+The trunk to Retell uses TLS (port 5061), which requires enabling the TLS transport in FreePBX:
 
-1. **Install Retell's root CA certificate** — SSH into FreePBX and download it (per [Retell's custom telephony docs](https://docs.retellai.com/deploy/custom-telephony)):
-   ```bash
-   sudo wget https://www.amazontrust.com/repository/G2-RootCA1.pem \
-     -O /etc/asterisk/keys/retell-ca.pem
-   sudo chown asterisk:asterisk /etc/asterisk/keys/retell-ca.pem
-   sudo chmod 644 /etc/asterisk/keys/retell-ca.pem
-   ```
-   This lets Asterisk verify Retell's server certificate during the TLS handshake.
-
-2. **Create a certificate in FreePBX** (if one doesn't already exist):
+1. **Confirm a certificate exists:**
    - Go to **Admin → Certificate Management**
    - FreePBX creates a default self-signed certificate on first login — confirm it's listed
    - If not, click **New Certificate → Generate Self-Signed Certificate**, give it a name, and submit
 
-3. **Enable TLS transport:**
+2. **Configure TLS and NAT settings:**
    - Go to **Settings → Asterisk SIP Settings → SIP Settings [chan_pjsip]**
-   - Click **Show Advanced Settings** → Yes (in Misc PJSip Settings)
-   - In **TLS/SSL/SRTP Settings**:
+   - In **TLS/SSL/SRTP Settings** (click Show Advanced Settings if needed):
      - Certificate Manager: select your certificate
      - SSL Method: `tlsv1_2`
-     - Verify Client: `No`
      - Verify Server: `Yes`
    - In **Transports**: enable `tls - 0.0.0.0 - All` → Yes
+   - In **NAT Settings**:
+     - External Address: your FreePBX Elastic IP (e.g., `34.206.232.89`)
+     - Local Networks: your VPC CIDR (e.g., `10.0.0.0/16`)
    - Click **Submit**, then **Apply Config**
 
-4. **Restart Asterisk** (required for transport changes):
+3. **Restart Asterisk:**
    ```bash
    sudo systemctl restart asterisk
    ```
 
-After this, the TLS transport option will appear in the trunk dropdown.
+> **Note:** The NAT settings are critical. Without them, FreePBX advertises its private IP (`10.0.x.x`) in the SDP media description, and Retell can't send audio back. The External Address tells Asterisk to advertise the public Elastic IP instead.
 
 ### Create the PJSIP Trunk
 
@@ -232,26 +224,16 @@ After this, the TLS transport option will appear in the trunk dropdown.
 | Field | Value |
 |-------|-------|
 | Media Encryption | `SRTP via in-SDP` |
+| Qualify Frequency | `0` |
 
-This ensures voice audio between FreePBX and Retell is encrypted with SRTP. Retell supports SRTP when the transport is TLS.
+Media Encryption ensures voice audio between FreePBX and Retell is encrypted with SRTP. Qualify Frequency is set to 0 because Retell does not respond to SIP OPTIONS keepalive requests — without this, Asterisk marks the trunk as "Unavailable" and refuses to route calls.
 
 ### Create an Extension
 
 1. Navigate to **Connectivity → Extensions**
 2. Click **+ Add Extension → Add New SIP [chan_pjsip] Extension**
 3. Set an extension number (e.g., `1001`) and a password
-4. Go to the **Advanced** tab and configure encryption:
-
-| Field | Value |
-|-------|-------|
-| Transport | `0.0.0.0-tls` |
-| Media Encryption | `SRTP via in-SDP` |
-| Allow Non-Encrypted Media | `No` |
-| Direct Media | `No` |
-
 4. Submit and apply config
-
-This encrypts the leg between your softphone and FreePBX (both signaling via TLS and audio via SRTP).
 
 ### Create an Outbound Route
 
@@ -264,17 +246,6 @@ This routes calls from your softphone to Retell AI via the trunk.
    - **Dial Patterns:** add a pattern that matches what you'll dial (e.g., `X.` to match any number)
 3. Submit and apply config
 
-### Create an Inbound Route
-
-This tells FreePBX what to do when Retell sends a call back (or for testing).
-
-1. Navigate to **Connectivity → Inbound Routes → Add Incoming Route**
-2. Configure:
-   - **Description:** `retell-inbound`
-   - **DID Number:** `ANY`
-   - **Set Destination:** Trunks → `retell-ai (pjsip)`
-3. Submit and apply config
-
 ### Register a Softphone
 
 Configure your softphone (Zoiper, Linphone) to register against FreePBX using the extension you created:
@@ -282,12 +253,10 @@ Configure your softphone (Zoiper, Linphone) to register against FreePBX using th
 | Setting | Value |
 |---------|-------|
 | SIP Server | FreePBX Elastic IP |
-| Port | `5061` |
-| Transport | `TLS` |
-| SRTP / Media Encryption | `Enabled` / `Required` |
-| Certificate verification | Accept the self-signed certificate when prompted |
-
-> **Note:** Since FreePBX uses a self-signed certificate, your softphone will warn you about an untrusted cert on first connection. This is expected — accept it. The connection is still encrypted, just not authenticated by a public CA. Both endpoints are under your control.
+| Port | `5060` |
+| Transport | `UDP` |
+| Username | Extension number (e.g., `1001`) |
+| Password | Extension password |
 
 ### Verify
 
@@ -296,30 +265,7 @@ Configure your softphone (Zoiper, Linphone) to register against FreePBX using th
 
 ---
 
-## 3. Retell AI Agent Configuration
-
-1. Log in to the [Retell AI dashboard](https://www.retellai.com/)
-2. Create a new agent → select **Custom LLM**
-3. Set the WebSocket URL (you'll get this from ngrok in step 5):
-   ```
-   wss://<your-ngrok-subdomain>.ngrok-free.app/llm-websocket
-   ```
-4. Choose a voice (any natural-sounding English voice)
-5. Configure agent behavior:
-   - **Responsiveness:** 0.5 (balanced)
-   - **Interruption sensitivity:** 0.3 (let agent finish disclosures)
-   - **Reminder trigger:** 8000ms
-   - **Enable backchannel:** Yes
-
-### Custom Telephony Settings
-
-In the Retell dashboard under Custom Telephony:
-- Add your FreePBX Elastic IP to allowed originators
-- Note the SIP URI format Retell expects for inbound calls
-
----
-
-## 4. Environment Setup
+## 3. Environment Setup
 
 From the project root:
 
@@ -343,7 +289,7 @@ export $(grep -v '^#' .env.local | xargs)
 
 ---
 
-## 5. Running the Custom LLM Server
+## 4. Running the Custom LLM Server
 
 ```bash
 cd server
@@ -377,9 +323,30 @@ Your Retell WebSocket URL is:
 wss://a1b2c3d4.ngrok-free.app/llm-websocket
 ```
 
-Paste this URL into your Retell dashboard agent configuration.
-
 > **Note:** The ngrok URL changes each time you restart (free tier). For a persistent URL across sessions, use a paid ngrok plan with a reserved domain.
+
+---
+
+## 5. Retell AI Agent Configuration
+
+Now that you have the ngrok WebSocket URL, configure the Retell agent:
+
+1. Log in to the [Retell AI dashboard](https://www.retellai.com/)
+2. Create a new agent → select **Custom LLM**
+3. Set the WebSocket URL:
+   ```
+   wss://<your-ngrok-subdomain>.ngrok-free.app/llm-websocket
+   ```
+4. Choose a voice (any natural-sounding English voice)
+5. Configure agent behavior:
+   - **Responsiveness:** 0.5 (balanced)
+   - **Interruption sensitivity:** 0.3 (let agent finish disclosures)
+   - **Reminder trigger:** 8000ms
+   - **Enable backchannel:** Yes
+
+### Custom Telephony Settings
+
+In the Retell dashboard add a test phone number (i.e. 14155550100) and add your FreePBX Elastic IP as termination endpoint.
 
 ---
 
@@ -387,19 +354,18 @@ Paste this URL into your Retell dashboard agent configuration.
 
 ### End-to-End Call Flow
 
-1. Start the Custom LLM server (`npm run dev`)
-2. Start ngrok (`ngrok http 8080`)
-3. Ensure the Retell agent has the current ngrok WebSocket URL
-4. Call from your softphone through FreePBX
+1. Ensure the Custom LLM server is running (`npm run dev`)
+2. Ensure ngrok is running and the Retell agent has the current WebSocket URL
+3. Register your softphone against FreePBX and make a test call
 
-### Test Scenario (4 turns, demonstrates all 3 compliance rules)
+### Test Scenario (demonstrates compliance controls)
 
 | Turn | Patient Says | Expected Behavior |
 |------|-------------|-------------------|
 | 1 | *(call connects)* | Agent delivers HIPAA disclosure + greeting |
 | 2 | "I'd like to reschedule. My name is James Wilson." | Agent asks for DOB to verify identity |
 | 3 | "November 2, 1972." | Agent finds record; if LLM repeats full name + DOB, PHI redaction triggers |
-| 4 | "I've been having bad headaches and dizziness." | Medical advice detection triggers → transfer message → call ends |
+| 4 | "Yes, please. July 14 at 9 AM." | Agent calls `book_appointment`, confirms booking |
 
 ### Verify Audit Logs
 
@@ -420,15 +386,16 @@ Watch the terminal running the Custom LLM server. Each turn produces a structure
 
 ---
 
-## 7. Response Compliance Rules
+## 7. Compliance Controls
 
-The server enforces three rules on every LLM response before it reaches the caller. Combined with per-turn audit logging and identity verification, these guardrails demonstrate how a compliance layer can sit between the LLM and the caller to enforce privacy and safety policies in real time.
+The server implements two compliance rules that run on every response during streaming.
 
-| Rule | Trigger | Action |
-|------|---------|--------|
-| **HIPAA Disclosure** | First turn of every call | Prepends mandatory disclosure to the response |
-| **Medical Advice Blocking** | Response contains medical keywords (e.g., "diagnosis", "prescribe", "symptoms suggest") | Blocks the response entirely, substitutes a transfer message, ends the call |
-| **PHI Redaction** | Response contains patient's full name AND date of birth together | Removes the DOB from the response |
+| Control | Mechanism | Action |
+|---------|-----------|--------|
+| **HIPAA Disclosure** | Begin message on WebSocket connect | Prepends mandatory disclosure before the patient speaks |
+| **PHI Redaction** | Per-sentence check during streaming | Replaces any sentence containing patient's full name AND date of birth with generic confirmation |
+| **Medical Scope Control** | System prompt + `transfer_to_nurse` function | LLM is instructed to never provide clinical advice; uses function calling to escalate |
+| **Audit Trail** | Post-turn logging | Logs raw LLM output vs. what was actually spoken, with compliance action and reason |
 
 ---
 
@@ -458,9 +425,15 @@ tail -f /var/log/freepbx-install.log
 
 ### No audio / one-way audio
 
+- **Most likely: NAT settings missing.** FreePBX on EC2 advertises its private IP (`10.0.x.x`) in the SDP unless you configure External Address in Settings → Asterisk SIP Settings → NAT Settings. Set it to your Elastic IP.
 - RTP ports (UDP 10000-20000) must be open from Retell IP ranges — check the security group
 - Ensure the Elastic IP is correctly associated with the instance
-- FreePBX may need NAT settings configured if behind the AWS VPC NAT
+
+### Trunk shows "Unavailable" / calls fail with "Could not create dialog"
+
+- **TLS transport not working:** Confirm a certificate is selected in TLS/SSL settings and SSL Method is `tlsv1_2` (not `tlsv1`). Check with: `sudo /usr/sbin/asterisk -rx "pjsip show transport 0.0.0.0-tls"` — `cert_file` should not be empty and `method` should be `tlsv1_2`.
+- **Qualify blocking calls:** Set Qualify Frequency to `0` in the trunk Advanced settings. Retell doesn't respond to OPTIONS requests, causing Asterisk to mark the endpoint as unreachable.
+- **DNS SRV errors** (`EDNSNOANSWERREC`): These are normal — Retell doesn't publish SRV records. They don't block calls as long as qualify is disabled.
 
 ### LLM errors
 
@@ -485,18 +458,19 @@ npm test
 
 ## Intentional Simplifications
 
-This demo implements several HIPAA-relevant controls (response compliance, audit logging, identity verification, network restrictions, TLS in transit) but is not a fully compliant system. Full HIPAA compliance additionally requires encryption at rest, role-based access controls, signed BAAs with all processors, workforce training, and breach notification procedures. The following table highlights the specific gaps between this demo and what production would require:
+This demo implements several HIPAA-relevant controls (PHI redaction, audit logging, identity verification, network restrictions, TLS in transit) but is not a fully compliant system. Full HIPAA compliance additionally requires encryption at rest, role-based access controls, signed BAAs with all processors, workforce training, and breach notification procedures. The following table highlights the specific gaps between this demo and what production would require:
 
 | Demo | Production |
 |------|-----------|
-| Server runs locally via ngrok | ECS/Fargate behind ALB with ACM cert + custom domain |
+| Server runs locally via ngrok | Containerized deployment behind load balancer with WebSocket support |
 | Mock EHR (3 patients, in-memory) | Real EHR integration (Epic FHIR, Cerner) with OAuth |
-| Keyword-based medical advice detection | Classifier model or structured symptom ontology |
+| Scope control via system prompt only | Fine-tuned classifier as safety net + structured symptom ontology |
 | Audit logs to stdout | HIPAA-compliant audit system (immutable S3 + Athena, or SIEM) |
-| No BAA signed | BAA required with Retell + every sub-processor |
+| No BAA signed | BAA required with Retell, OpenAI, and every sub-processor |
 | Single AZ, no redundancy | Multi-AZ with failover for telephony workloads |
 | ngrok provides TLS | ACM certificate on your own domain |
 | Hardcoded patient data | Real patient lookup with proper auth + access controls |
+| Hand-rolled tool loop | Agent framework (LangGraph, Strands) or MCP for standardized tool interfaces |
 
 ---
 
